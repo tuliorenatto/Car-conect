@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OBD Web Console – Multi-Conexão</title>
+  <script>
+    // Utilitários de fluxo
+    let port, reader, writer, readLoopActive = false;
+    const textDecoder = new TextDecoder();
+    const textEncoder = new TextEncoder();
+    let isWebSerialAvailable = false;
+
+    function log(msg) {
+      const out = document.getElementById('out');
+      const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 5;
+      out.value += msg + "\n";
+      if (atEnd) out.scrollTop = out.scrollHeight;
+    }
+
+    async function connectSerial() {
+      try {
+        // Usa a Web Serial API para conectar via Bluetooth (SPP) ou OTG (USB Serial)
+        // O navegador irá mostrar um seletor unificado para ambas as opções.
+        port = await navigator.serial.requestPort({});
+        await port.open({ baudRate: 38400 });
+        
+        writer = port.writable.getWriter();
+        reader = port.readable.getReader();
+        document.getElementById('status').textContent = 'Conectado';
+        log('> Porta serial aberta. Iniciando leitura...');
+        readLoopActive = true;
+        readLoop();
+        await initELM();
+      } catch (e) {
+        log('! Erro ao conectar: ' + e);
+        document.getElementById('status').textContent = 'Desconectado';
+      }
+    }
+
+    async function connectWifi() {
+      // Nota: Esta é uma conexão de exemplo. Endereços IP e portas podem variar.
+      // Você pode precisar de um servidor proxy para contornar problemas de CORS.
+      // A maioria dos scanners Wi-Fi usa o endereço 192.168.0.10:35000
+      const host = prompt("Digite o endereço IP do scanner Wi-Fi (ex: 192.168.0.10):");
+      if (!host) {
+        log('! Conexão Wi-Fi cancelada.');
+        return;
+      }
+      const url = `http://${host}/`; // Usando HTTP como exemplo
+      
+      log('> Tentando conectar via Wi-Fi...');
+      // Wi-Fi não usa Web Serial. Usa fetch() ou WebSockets.
+      // A implementação completa de WebSockets é mais complexa.
+      // Este é um exemplo simples para simular a conexão.
+      try {
+        const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          log('> Conectado via Wi-Fi.');
+          document.getElementById('status').textContent = 'Conectado';
+          // Aqui você implementaria a lógica de envio/recebimento de comandos.
+          // Por exemplo, usando WebSockets.
+        } else {
+          log('! Erro na conexão Wi-Fi: ' + response.statusText);
+          document.getElementById('status').textContent = 'Desconectado';
+        }
+      } catch (e) {
+        log('! Erro de rede ou scanner não encontrado: ' + e);
+        document.getElementById('status').textContent = 'Desconectado';
+      }
+    }
+
+    async function disconnect() {
+      // Disconexão para serial (Bluetooth/OTG)
+      if (port) {
+        try {
+          readLoopActive = false;
+          if (reader) { await reader.cancel(); reader.releaseLock(); }
+          if (writer) { writer.releaseLock(); }
+          await port.close();
+          log('> Porta serial fechada.');
+        } catch (e) {
+          log('! Erro ao desconectar porta serial: ' + e);
+        }
+      }
+      // Outras lógicas de disconexão para Wi-Fi
+      // ...
+      document.getElementById('status').textContent = 'Desconectado';
+    }
+
+    // --- Funções Auxiliares (mantidas do código anterior) ---
+    async function readLoop() {
+      try {
+        while (port && readLoopActive) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) { log(textDecoder.decode(value)); }
+        }
+      } catch (e) { log('! Leitura encerrada: ' + e); } finally { reader.releaseLock(); }
+    }
+    async function sendRaw(cmd) {
+      if (!writer) { log('! Não conectado'); return; }
+      const payload = cmd.endsWith('\r') ? cmd : cmd + '\r';
+      await writer.write(textEncoder.encode(payload));
+      log('>> ' + cmd);
+    }
+    async function initELM() {
+      const seq = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH1', 'ATSP0'];
+      for (const cmd of seq) { await sendRaw(cmd); await delay(250); }
+      log('> ELM inicializado.');
+    }
+    function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+    async function readRPM() { await sendRaw('010C'); }
+    async function readCoolant() { await sendRaw('0105'); }
+    async function readDTCs() { await sendRaw('03'); }
+    async function clearDTCs() { await sendRaw('04'); }
+    async function sendCustom() {
+      const v = document.getElementById('custom').value.trim();
+      if (v) await sendRaw(v);
+    }
+
+    // --- Função de Verificação de Compatibilidade ao Carregar a Página ---
+    window.addEventListener('DOMContentLoaded', () => {
+      isWebSerialAvailable = 'serial' in navigator;
+      const serialBtn = document.getElementById('serial-btn');
+      const wifiBtn = document.getElementById('wifi-btn');
+      const warn = document.getElementById('warn');
+
+      if (isWebSerialAvailable) {
+        serialBtn.style.display = 'block';
+        warn.style.display = 'none';
+      } else {
+        serialBtn.style.display = 'none';
+        warn.style.display = 'block';
+      }
+
+      // O botão de Wi-Fi é sempre exibido, mas com uma mensagem.
+      wifiBtn.style.display = 'block';
+    });
+  </script>
+  <style>
+    :root { --bg:#0b0f14; --fg:#e6edf3; --muted:#9aa4ae; --card:#111722; --accent:#6ea8fe; }
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+    .wrap{max-width:980px;margin:24px auto;padding:0 16px}
+    .card{background:var(--card);border:1px solid #1b2230;border-radius:16px;box-shadow:0 4px 30px rgba(0,0,0,.25)}
+    header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px}
+    h1{font-size:18px;margin:0}
+    .btn{background:#192235;border:1px solid #24324a;color:var(--fg);padding:10px 14px;border-radius:12px;cursor:pointer;flex-grow:1;text-align:center;}
+    .btn[disabled]{opacity:.5;cursor:not-allowed}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px;padding:16px}
+    @media(min-width:800px){.grid{grid-template-columns:2fr 1fr}}
+    textarea{width:100%;height:320px;background:#0c121b;color:#cfe1ff;border:1px solid #1e2a3f;border-radius:12px;padding:10px;font-family:ui-monospace,Consolas,Monaco,monospace}
+    .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start;}
+    .input-group { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-top: 8px; }
+    input[type=text]{flex-grow:1;min-width:180px;background:#0c121b;color:#cfe1ff;border:1px solid #1e2a3f;border-radius:12px;padding:10px}
+    .tag{font-size:12px;color:var(--muted)}
+    .status{font-weight:600;color:var(--accent)}
+    .warn{display:none;background:#3a1d1d;color:#ffd9d9;border:1px solid #5c2a2a;border-radius:12px;padding:10px;margin-bottom:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="warn" id="warn">
+      <p>Seu navegador não suporta a <b>Web Serial API</b>.</p>
+      <p>Apenas a conexão Wi-Fi pode funcionar. Para Bluetooth/OTG, use Chrome 138+ no Android.</p>
+    </div>
+    <div class="card">
+      <header>
+        <h1>OBD Web Console</h1>
+        <div>
+          <span class="tag">Status: <span class="status" id="status">Desconectado</span></span>
+        </div>
+      </header>
+      <div class="grid">
+        <div>
+          <div class="row">
+            <button class="btn" id="serial-btn" onclick="connectSerial()">Conectar Bluetooth/OTG</button>
+            <button class="btn" id="wifi-btn" onclick="connectWifi()">Conectar Wi-Fi</button>
+            <button class="btn" onclick="disconnect()">Desconectar</button>
+          </div>
+          <div style="margin-top:12px">
+            <textarea id="out" readonly placeholder="> Logs aparecerão aqui...\n> Conecte, depois use os botões para enviar comandos."></textarea>
+          </div>
+        </div>
+        <div>
+          <div class="row">
+            <button class="btn" onclick="readRPM()">Ler RPM (010C)</button>
+            <button class="btn" onclick="readCoolant()">Temp Líquido (0105)</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn" onclick="readDTCs()">Ler DTCs (03)</button>
+            <button class="btn" onclick="clearDTCs()">Apagar DTCs (04)</button>
+          </div>
+          <div class="input-group">
+            <input id="custom" type="text" placeholder="Comando custom (ex: 0111 ou ATSH...)" />
+            <button class="btn" onclick="sendCustom()">Enviar</button>
+          </div>
+          <p class="tag" style="margin-top:8px">Dica: comandos terminam com <code>\r</code>. O app adiciona automaticamente.</p>
+        </div>
+      </div>
+    </div>
+
+    <p class="tag" style="margin-top:12px">Requisitos: Chrome Android 138+ para Bluetooth/OTG. Wi-Fi usa APIs de rede padrão.</p>
+  </div>
+</body>
+</html>
